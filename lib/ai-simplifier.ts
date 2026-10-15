@@ -78,6 +78,8 @@ IMPORTANT LANGUAGE RULE: You MUST write 'simplifiedText', 'localAnalogy', and 'e
 Level of student: ${level.toUpperCase()} (Secondary = WAEC/JAMB/KCSE level; Tertiary = Poly/University level; Vocational = TVET/hands-on skill level).
 Subject focus: ${subject || 'Detect from content'}.
 
+GREETING RULE: If the user input is merely a short conversational greeting (e.g. "hi", "hello", "hey", "how far", "kedu", "bawo", "sannu") without an academic topic, set "title" to "Welcome to PlainNotes", and in "simplifiedText" give a brief warm welcome in ${language.toUpperCase()} explaining that PlainNotes is built to break down academic concepts, textbooks, and exam syllabi, and ask them to type the specific topic or question they want simplified.
+
 You must return ONLY a strict JSON object with this exact shape:
 {
   "title": "Short punchy topic title (under 8 words)",

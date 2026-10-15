@@ -836,6 +836,17 @@ export function ChatGptSimplifier({
             >
               What would you like simplified?
             </h1>
+            <p
+              style={{
+                fontSize: 16,
+                color: '#71717a',
+                lineHeight: 1.5,
+                margin: '0 auto',
+                maxWidth: 580
+              }}
+            >
+              PlainNotes is a focused academic simplifier, not a casual chatbot. Skip the greetings and enter the exact topic, concept, or exam question you want broken down.
+            </p>
           </div>
 
           <div
