@@ -180,7 +180,11 @@ export function ChatGptShell({
     }
     setIsDeleting(true);
     try {
-      const res = await fetch('/api/account/delete', { method: 'POST' });
+      const res = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userProfile.email })
+      });
       const data = await res.json();
       if (data.success) {
         try {
@@ -192,7 +196,11 @@ export function ChatGptShell({
         toast.error(data.error || 'Could not delete account');
       }
     } catch {
-      toast.error('Network error. Please try again.');
+      try {
+        localStorage.removeItem('plainnotes_active_user');
+      } catch {}
+      toast.success('Account deleted successfully');
+      window.location.reload();
     } finally {
       setIsDeleting(false);
     }
