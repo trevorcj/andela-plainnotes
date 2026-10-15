@@ -19,11 +19,14 @@ interface SavedNotesViewProps {
   savedNotes: SimplifiedNote[];
   onDeleteNote: (id: string) => void;
   onGoToStudio?: () => void;
+  onOpenNote?: (note: SimplifiedNote) => void;
 }
 
 export function SavedNotesView({
   savedNotes,
-  onDeleteNote
+  onDeleteNote,
+  onGoToStudio,
+  onOpenNote
 }: SavedNotesViewProps) {
   const [isSpeaking, setIsSpeaking] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -101,13 +104,40 @@ export function SavedNotesView({
             background: '#ffffff',
             border: '1px solid #e4e4e7',
             borderRadius: 12,
-            padding: '40px 24px',
+            padding: '52px 24px',
             textAlign: 'center',
             color: '#71717a',
             fontSize: 14.5
           }}
         >
-          Your saved note is empty.
+          <div style={{ maxWidth: 360, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 48, height: 48, borderRadius: 24, background: '#f4f4f5', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a' }}>
+              <BookmarkCheck size={24} />
+            </div>
+            <div style={{ fontWeight: 600, color: '#18181b', fontSize: 16 }}>Your saved notes vault is empty</div>
+            <p style={{ margin: 0, lineHeight: 1.5, color: '#71717a', fontSize: 14 }}>
+              Notes you bookmark while simplifying will appear here for fast revision, audio listening, and offline access.
+            </p>
+            {onGoToStudio && (
+              <button
+                type="button"
+                onClick={onGoToStudio}
+                style={{
+                  marginTop: 6,
+                  padding: '9px 18px',
+                  borderRadius: 8,
+                  background: '#18181b',
+                  color: '#ffffff',
+                  fontSize: 13.5,
+                  fontWeight: 500,
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                Start simplifying notes
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -205,7 +235,19 @@ export function SavedNotesView({
 
                 {/* Content */}
                 <div>
-                  <h3 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 6px', color: '#09090b', letterSpacing: '-0.01em' }}>
+                  <h3
+                    onClick={() => onOpenNote?.(note)}
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 700,
+                      margin: '0 0 6px',
+                      color: '#09090b',
+                      letterSpacing: '-0.01em',
+                      cursor: onOpenNote ? 'pointer' : 'default',
+                      display: 'inline-block'
+                    }}
+                    title={onOpenNote ? 'Open this note in conversation' : undefined}
+                  >
                     {note.title}
                   </h3>
                   <p style={{ fontSize: 14.5, color: '#27272a', lineHeight: 1.6, margin: 0 }}>

@@ -22,9 +22,18 @@ export default function PlainNotesWorkspace() {
     const syncFromUrl = async () => {
       if (typeof window === 'undefined') return;
       const urlParams = new URLSearchParams(window.location.search);
+      const isSavedView = urlParams.get('view') === 'saved';
+
+      if (isSavedView) {
+        setIsViewingSaved(true);
+        setActiveNote(null);
+        return;
+      }
+
       const noteId = urlParams.get('note');
       if (!noteId) {
         setActiveNote(null);
+        setIsViewingSaved(false);
         return;
       }
 
@@ -127,6 +136,7 @@ export default function PlainNotesWorkspace() {
   const updateUrlForNote = (noteId: string | null) => {
     if (typeof window === 'undefined') return;
     const currentUrl = new URL(window.location.href);
+    currentUrl.searchParams.delete('view');
     if (noteId) {
       currentUrl.searchParams.set('note', noteId);
     } else {
@@ -212,13 +222,21 @@ export default function PlainNotesWorkspace() {
   return (
     <ChatGptShell
       onNewNote={() => {
+        setIsViewingSaved(false);
         handleActiveNoteChange(null);
       }}
       onSelectSaved={() => {
         setIsViewingSaved(true);
-        handleActiveNoteChange(null);
+        setActiveNote(null);
+        if (typeof window !== 'undefined') {
+          const currentUrl = new URL(window.location.href);
+          currentUrl.searchParams.set('view', 'saved');
+          currentUrl.searchParams.delete('note');
+          window.history.pushState({ view: 'saved' }, '', currentUrl.toString());
+        }
       }}
       onSelectRecentNote={(note) => {
+        setIsViewingSaved(false);
         handleActiveNoteChange(note);
       }}
       savedNotes={savedNotes}
@@ -233,9 +251,13 @@ export default function PlainNotesWorkspace() {
           <SavedNotesView
             savedNotes={savedNotes}
             onDeleteNote={handleDeleteNote}
+            onOpenNote={(note) => {
+              setIsViewingSaved(false);
+              handleActiveNoteChange(note);
+            }}
             onGoToStudio={() => {
               setIsViewingSaved(false);
-              setActiveNote(null);
+              handleActiveNoteChange(null);
             }}
           />
         </div>
