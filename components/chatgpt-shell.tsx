@@ -409,6 +409,11 @@ export function ChatGptShell({
           <button
             type="button"
             onClick={() => {
+              if (!userProfile.isLoggedIn) {
+                toast.info('Please log in or sign up to view your saved notes');
+                setShowLoginModal(true);
+                return;
+              }
               onSelectSaved();
               if (isMobile) setSidebarOpen(false);
             }}

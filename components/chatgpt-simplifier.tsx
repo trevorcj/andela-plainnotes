@@ -555,15 +555,36 @@ export function ChatGptSimplifier({
 
       if (activeNote) {
         const updatedTurns = [...priorTurns, newTurn];
-        const updatedNote: SimplifiedNote = {
-          ...activeNote,
-          simplifiedText: data.note.simplifiedText,
-          localAnalogy: data.note.localAnalogy,
-          examEssentials: data.note.examEssentials,
-          quizzes: data.note.quizzes,
-          turns: updatedTurns
-        };
-        onActiveNoteChange(updatedNote);
+        const isLocalNote = recentNotes.some(n => n.id === activeNote.id) || savedNotes.some(n => n.id === activeNote.id);
+        const currentUser = await getLoggedInUser();
+        const isOwner = isLocalNote || Boolean(currentUser?.id && activeNote.userId === currentUser.id);
+
+        if (!isOwner) {
+          // Shared note being viewed by a guest or another learner:
+          // Fork to a new local session so asking questions never affects the original owner's note
+          const forkedNoteId = crypto.randomUUID();
+          const forkedNote: SimplifiedNote = {
+            ...activeNote,
+            id: forkedNoteId,
+            userId: currentUser?.id || null,
+            simplifiedText: data.note.simplifiedText,
+            localAnalogy: data.note.localAnalogy,
+            examEssentials: data.note.examEssentials,
+            quizzes: data.note.quizzes,
+            turns: updatedTurns
+          };
+          onActiveNoteChange(forkedNote);
+        } else {
+          const updatedNote: SimplifiedNote = {
+            ...activeNote,
+            simplifiedText: data.note.simplifiedText,
+            localAnalogy: data.note.localAnalogy,
+            examEssentials: data.note.examEssentials,
+            quizzes: data.note.quizzes,
+            turns: updatedTurns
+          };
+          onActiveNoteChange(updatedNote);
+        }
       } else {
         const fullNote: SimplifiedNote = {
           ...data.note,
@@ -629,16 +650,85 @@ export function ChatGptSimplifier({
     setTimeout(() => setHasCopied(false), 2000);
   };
 
+  const checkUserLoggedIn = (): boolean => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('plainnotes_active_user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed?.isLoggedIn && parsed?.email) return true;
+        }
+      } catch {}
+    }
+    return false;
+  };
+
+  const getLoggedInUser = async () => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('plainnotes_active_user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed?.isLoggedIn && parsed?.email) {
+            return { email: parsed.email, name: parsed.name, id: parsed.id || parsed.email };
+          }
+        }
+      } catch {}
+    }
+    const supabase = createClient();
+    if (supabase) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          return { email: user.email, name: user.user_metadata?.name || user.email?.split('@')[0], id: user.id };
+        }
+      } catch {}
+    }
+    return null;
+  };
+
+  const handleSaveClick = (note: SimplifiedNote) => {
+    if (!checkUserLoggedIn()) {
+      toast.info('Please log in or sign up to save notes to your vault');
+      onRequestLoginModal?.();
+      return;
+    }
+    onSaveNote(note);
+  };
+
   const handleShare = async () => {
     if (!activeNote) return;
-    const supabase = createClient();
-    if (!supabase) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await getLoggedInUser();
     if (!user) {
       toast.info('Please log in or sign up to share this note link');
       onRequestLoginModal?.();
       return;
+    }
+
+    // Sync note to Supabase plain_notes with is_curated: true so anyone with the link can view it
+    const supabase = createClient();
+    if (supabase) {
+      try {
+        await supabase.from('plain_notes').insert({
+          id: activeNote.id,
+          title: activeNote.title,
+          subject: activeNote.subject,
+          language: activeNote.language,
+          level: activeNote.level,
+          original_text: activeNote.originalText || activeNote.title,
+          simplified_text: activeNote.simplifiedText,
+          local_analogy: activeNote.localAnalogy,
+          exam_essentials: activeNote.examEssentials || [],
+          quiz: {
+            ...(activeNote.quiz || {}),
+            storedTurns: activeNote.turns || []
+          },
+          whatsapp_text: activeNote.whatsappText || '',
+          is_curated: true
+        });
+      } catch (err) {
+        console.warn('Share note sync error:', err);
+      }
     }
 
     const shareUrl = `${window.location.origin}/app?note=${activeNote.id}`;
@@ -1653,7 +1743,7 @@ export function ChatGptSimplifier({
 
                         <button
                           type="button"
-                          onClick={() => onSaveNote(activeNote)}
+                          onClick={() => handleSaveClick(activeNote)}
                           style={{
                             padding: 7,
                             borderRadius: 6,

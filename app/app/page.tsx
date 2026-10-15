@@ -8,6 +8,8 @@ import { SimplifiedNote } from '@/lib/types/plainnotes';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 
+import { CURATED_AFRICAN_NOTES } from '@/lib/curated-notes';
+
 const SAVED_STORAGE_KEY = 'plainnotes_saved_vault_v2';
 const RECENTS_STORAGE_KEY = 'plainnotes_recents_history_v2';
 
@@ -25,6 +27,18 @@ export default function PlainNotesWorkspace() {
       const isSavedView = urlParams.get('view') === 'saved';
 
       if (isSavedView) {
+        const hasLocalUser = typeof window !== 'undefined' && Boolean(localStorage.getItem('plainnotes_active_user'));
+        const supabase = createClient();
+        let hasSession = false;
+        if (supabase) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) hasSession = true;
+        }
+        if (!hasLocalUser && !hasSession) {
+          toast.info('Please log in or sign up to view your saved notes');
+          setLoginModalOpen(true);
+          return;
+        }
         setIsViewingSaved(true);
         setActiveNote(null);
         return;
@@ -37,7 +51,7 @@ export default function PlainNotesWorkspace() {
         return;
       }
 
-      // Check recents first
+      // 1. Check local recents first
       try {
         const storedRecents = localStorage.getItem(RECENTS_STORAGE_KEY);
         const recentsList = storedRecents ? JSON.parse(storedRecents) : [];
@@ -48,6 +62,7 @@ export default function PlainNotesWorkspace() {
           return;
         }
 
+        // 2. Check local saved vault
         const storedSaved = localStorage.getItem(SAVED_STORAGE_KEY);
         const savedList = storedSaved ? JSON.parse(storedSaved) : [];
         const matchSaved = savedList.find((n: SimplifiedNote) => n.id === noteId);
@@ -58,21 +73,16 @@ export default function PlainNotesWorkspace() {
         }
       } catch {}
 
-      // If not in local storage, check user status
-      const hasLocalUser = typeof window !== 'undefined' && Boolean(localStorage.getItem('plainnotes_active_user'));
-      const supabase = createClient();
-      let hasSession = false;
-      if (supabase) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) hasSession = true;
-      }
-
-      if (!hasLocalUser && !hasSession) {
-        toast.info('Please log in or sign up to view this shared note');
-        setLoginModalOpen(true);
+      // 3. Check curated African study notes
+      const curated = CURATED_AFRICAN_NOTES.find(n => n.id === noteId);
+      if (curated) {
+        setActiveNote(curated);
+        setIsViewingSaved(false);
         return;
       }
 
+      // 4. Check Supabase shared notes (accessible to anyone with the link)
+      const supabase = createClient();
       if (supabase) {
         const { data, error } = await supabase
           .from('plain_notes')
@@ -81,6 +91,7 @@ export default function PlainNotesWorkspace() {
           .maybeSingle();
 
         if (data && !error) {
+          const storedTurns = (data.quiz as any)?.storedTurns;
           const fetchedNote: SimplifiedNote = {
             id: data.id,
             title: data.title,
@@ -95,10 +106,12 @@ export default function PlainNotesWorkspace() {
             whatsappText: data.whatsapp_text || '',
             isCurated: data.is_curated,
             createdAt: data.created_at,
-            userId: data.user_id
+            userId: data.user_id,
+            turns: Array.isArray(storedTurns) && storedTurns.length > 0 ? storedTurns : undefined
           };
           setActiveNote(fetchedNote);
           setIsViewingSaved(false);
+          return;
         }
       }
     };
@@ -164,6 +177,12 @@ export default function PlainNotesWorkspace() {
   };
 
   const handleSaveNote = (note: SimplifiedNote) => {
+    const hasLocalUser = typeof window !== 'undefined' && Boolean(localStorage.getItem('plainnotes_active_user'));
+    if (!hasLocalUser) {
+      toast.info('Please log in or sign up to save notes to your vault');
+      setLoginModalOpen(true);
+      return;
+    }
     setSavedNotes(prev => {
       const isAlreadySaved = prev.some(n => n.id === note.id);
       let updated: SimplifiedNote[];
