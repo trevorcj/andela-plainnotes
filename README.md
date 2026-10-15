@@ -2,8 +2,6 @@
 
 PlainNotes is an AI-powered academic simplifier designed for African students. It breaks down complex textbooks, lecture slides, academic documents, and exam topics into crystal-clear explanations using authentic African dialects, relatable real-world analogies, and interactive quizzes.
 
----
-
 ## Features
 
 - **Multi-Dialect & Language Support**: Learn in authentic Nigerian Pidgin, Yoruba, Hausa, Igbo, Kenyan Swahili, French, or plain English.
@@ -16,7 +14,6 @@ PlainNotes is an AI-powered academic simplifier designed for African students. I
 - **Magic-Link Authentication**: Fast, passwordless email login powered by Supabase.
 - **Persistent Study History**: Save notes to your personal vault and revisit past conversations across devices.
 
----
 
 ## Environment Variables
 
@@ -40,7 +37,6 @@ OPENAI_MODEL=gpt-4.1-mini
 | `OPENAI_API_KEY` | OpenAI API key for note simplification |
 | `OPENAI_MODEL` | AI model version (defaults to `gpt-4.1-mini`) |
 
----
 
 ## Getting Started
 
