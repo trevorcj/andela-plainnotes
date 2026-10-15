@@ -1,0 +1,3 @@
+'use client';
+import {useState,useEffect} from 'react';
+export function ConnectionStatus(){const [online,setOnline]=useState(true);useEffect(()=>{const update=()=>setOnline(navigator.onLine);update();window.addEventListener('online',update);window.addEventListener('offline',update);return()=>{window.removeEventListener('online',update);window.removeEventListener('offline',update)}},[]);return <p role="status">{online?'Your browser reports an internet connection. Changes are saved only after Supabase confirms them.':'You are offline. Reconnect before submitting changes. Personal data is not cached on this device.'}</p>}

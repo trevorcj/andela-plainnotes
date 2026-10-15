@@ -1,0 +1,3 @@
+'use server';
+import {z} from 'zod';import {revalidatePath} from 'next/cache';import {requireUser} from '@/lib/auth';
+export async function updateProfile(_: {error?:string;message?:string},f:FormData):Promise<{error?:string;message?:string}>{const v=z.object({full_name:z.string().trim().min(2).max(100),location:z.string().trim().max(100)}).safeParse(Object.fromEntries(f));if(!v.success)return {error:v.error.issues[0].message};const {client,user}=await requireUser();const {error}=await client.from('profiles').update({...v.data,updated_at:new Date().toISOString()}).eq('user_id',user.id);if(error)return {error:'Profile update failed. Please retry.'};revalidatePath('/app','layout');return {message:'Profile updated.'};}

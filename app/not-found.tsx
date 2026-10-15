@@ -1,0 +1,1 @@
+import Link from 'next/link';export default function NotFound(){return <main className="onboarding"><h1>This page isn’t here.</h1><p>Explore your options from the dashboard.</p><Link className="btn" href="/app">Go to dashboard</Link></main>}

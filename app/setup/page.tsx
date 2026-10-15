@@ -1,0 +1,2 @@
+import {Brand} from '@/components/brand';
+export default function Setup(){return <main className="onboarding"><Brand/><h1>Pathwise is being connected.</h1><p className="muted">Account services are not available yet. Please return once setup is complete.</p><div className="source-note">For the project owner: configure the Supabase project URL and publishable key, apply the database migrations, and configure authentication redirects. No account data is collected while the backend is unavailable.</div></main>}

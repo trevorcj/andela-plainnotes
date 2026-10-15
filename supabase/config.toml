@@ -1,0 +1,11 @@
+project_id = "pathwise"
+[db.seed]
+enabled = false
+sql_paths = []
+[auth]
+enable_signup = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+[auth.email]
+enable_signup = true
+enable_confirmations = true

@@ -1,0 +1,3 @@
+import {requireUser} from '@/lib/auth';import {OnboardingForm} from '@/components/onboarding-form';
+export const dynamic='force-dynamic';
+export default async function Page(){const {client,user}=await requireUser();const [{data:draft,error:d},{data:courses,error:c},{data:profile,error:p}]=await Promise.all([client.from('onboarding_drafts').select('step,payload').eq('user_id',user.id).maybeSingle(),client.from('courses').select('id,name').eq('published',true).order('name'),client.from('profiles').select('full_name,stage,location,onboarding_completed_at').eq('user_id',user.id).single()]);if(d||c||p)throw new Error('Unable to load onboarding. Check that database migrations have been applied.');return <OnboardingForm courses={courses||[]} draft={draft} profile={profile}/>}

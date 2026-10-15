@@ -1,0 +1,37 @@
+{
+  "name": "pathwise",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && node scripts/package-standalone.mjs",
+    "start": "node .next/standalone/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "make-admin": "node --env-file=.env.local scripts/make-admin.mjs",
+    "get-login-link": "node --env-file=.env.local scripts/get-login-link.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.57.0",
+    "lucide-react": "^0.468.0",
+    "next": "^15.5.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "sonner": "^2.0.8",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.0.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

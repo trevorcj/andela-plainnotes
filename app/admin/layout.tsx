@@ -1,0 +1,2 @@
+import Link from 'next/link';import {requireAdmin} from '@/lib/auth';import {Brand} from '@/components/brand';
+export const dynamic='force-dynamic';export default async function AdminLayout({children}:{children:React.ReactNode}){await requireAdmin();return <main className="counselor-onboarding" style={{maxWidth:1200}}><Brand/><nav className="admin-nav"><Link href="/admin/sources">Sources</Link><Link href="/admin/catalog">Catalog</Link><Link href="/admin/workflows">Publish & review</Link><Link href="/app">Student workspace</Link></nav>{children}</main>}
