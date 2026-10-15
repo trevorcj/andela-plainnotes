@@ -194,6 +194,7 @@ export function ChatGptShell({
       const { error } = await supabase.auth.signInWithOtp({
         email: canonicalEmail,
         options: {
+          shouldCreateUser: true,
           emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/app` : undefined
         }
       });
@@ -610,10 +611,10 @@ export function ChatGptShell({
             ) : (
               <div style={{ padding: '16px 8px 8px' }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: '#09090b', marginBottom: 4 }}>
-                  Log in to save notes
+                  Sign up to save notes
                 </div>
                 <div style={{ fontSize: 12.5, color: '#71717a', lineHeight: 1.5, marginBottom: 14 }}>
-                  Log in to save your simplified notes, access your study history across devices, and share notes.
+                  Sign up to save your simplified notes, access your study history across devices, and share notes.
                 </div>
                 <button
                   type="button"
@@ -633,7 +634,7 @@ export function ChatGptShell({
                   onMouseEnter={e => (e.currentTarget.style.background = '#f4f4f5')}
                   onMouseLeave={e => (e.currentTarget.style.background = '#ffffff')}
                 >
-                  Log in
+                  Sign up
                 </button>
               </div>
             )}
@@ -866,7 +867,7 @@ export function ChatGptShell({
                   Check your inbox
                 </h2>
                 <p style={{ fontSize: 14, color: '#71717a', margin: '0 0 20px', lineHeight: 1.5 }}>
-                  We sent a sign-in link to <strong>{authEmail}</strong>. Click the link in your email to sign in to PlainNotes.
+                  We sent a sign-up link to <strong>{authEmail}</strong>. Click the link in your email to activate your PlainNotes account.
                 </p>
 
                 <div
@@ -880,7 +881,7 @@ export function ChatGptShell({
                   }}
                 >
                   <Mail size={24} style={{ margin: '0 auto 8px', color: '#09090b' }} />
-                  <div>Click the link in your email to sign in</div>
+                  <div>Click the link in your email to complete sign up</div>
                 </div>
 
                 <button
@@ -906,10 +907,10 @@ export function ChatGptShell({
               <div>
                 <div style={{ textAlign: 'center', marginBottom: 24 }}>
                   <h2 style={{ fontSize: 24, fontWeight: 700, color: '#09090b', letterSpacing: '-0.02em', margin: 0, marginBottom: 8 }}>
-                    Sign in to PlainNotes
+                    Sign up for PlainNotes
                   </h2>
                   <p style={{ fontSize: 13.5, color: '#52525b', margin: 0, lineHeight: 1.45, padding: '0 10px' }}>
-                    Enter your email address. We will send you a sign-in link.
+                    Enter your email address. We will send you a sign-up link.
                   </p>
                 </div>
 
