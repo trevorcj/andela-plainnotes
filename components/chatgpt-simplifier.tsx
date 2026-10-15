@@ -508,14 +508,12 @@ export function ChatGptSimplifier({
           turns: updatedTurns
         };
         onActiveNoteChange(updatedNote);
-        onSaveNote(updatedNote);
       } else {
         const fullNote: SimplifiedNote = {
           ...data.note,
           turns: [newTurn]
         };
         onActiveNoteChange(fullNote);
-        onSaveNote(fullNote);
       }
 
       setAnimatingTurnId(turnId);

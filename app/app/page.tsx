@@ -155,8 +155,15 @@ export default function PlainNotesWorkspace() {
 
   const handleSaveNote = (note: SimplifiedNote) => {
     setSavedNotes(prev => {
-      if (prev.some(n => n.id === note.id)) return prev;
-      const updated = [note, ...prev];
+      const isAlreadySaved = prev.some(n => n.id === note.id);
+      let updated: SimplifiedNote[];
+      if (isAlreadySaved) {
+        updated = prev.filter(n => n.id !== note.id);
+        toast.info('Removed from saved vault');
+      } else {
+        updated = [note, ...prev];
+        toast.success('Saved to vault');
+      }
       try {
         localStorage.setItem(SAVED_STORAGE_KEY, JSON.stringify(updated));
       } catch (err) {
