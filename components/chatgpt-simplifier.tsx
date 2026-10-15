@@ -39,6 +39,7 @@ import { toast } from 'sonner';
 import { SimplifiedNote, SocraticQuiz, SUPPORTED_LANGUAGES, LanguageCode, ChatTurn } from '@/lib/types/plainnotes';
 import { CURATED_AFRICAN_NOTES } from '@/lib/curated-notes';
 import { createClient } from '@/lib/supabase/client';
+import { extractTextFromPdfFile } from '@/lib/pdf-client';
 
 const QUIZ_STORAGE_KEY = 'plainnotes_quiz_persistence_v2';
 
@@ -378,7 +379,7 @@ export function ChatGptSimplifier({
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -396,16 +397,56 @@ export function ChatGptSimplifier({
       };
       reader.readAsDataURL(file);
     } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setAttachedFile({
-          name: file.name,
-          type: 'pdf',
-          base64: reader.result as string
-        });
-        toast.success(`Attached PDF: ${file.name}`);
-      };
-      reader.readAsDataURL(file);
+      const toastId = toast.loading(`Reading PDF: ${file.name}...`);
+      try {
+        const result = await extractTextFromPdfFile(file);
+        if (result.text && result.text.length >= 30) {
+          setAttachedFile({
+            name: file.name,
+            type: 'pdf',
+            textPreview: result.text
+          });
+          toast.success(
+            `Attached ${file.name} (${result.wordCount.toLocaleString()} words extracted)`,
+            { id: toastId }
+          );
+        } else {
+          // If no text could be extracted (scanned PDF / image-only)
+          if (file.size > 3.5 * 1024 * 1024) {
+            toast.error(
+              'This PDF appears to be a scanned image and exceeds 3.5MB. Please take a photo of the page and attach it as an image, or upload a digital PDF.',
+              { id: toastId }
+            );
+          } else {
+            const reader = new FileReader();
+            reader.onload = () => {
+              setAttachedFile({
+                name: file.name,
+                type: 'pdf',
+                base64: reader.result as string
+              });
+              toast.info(`Attached PDF (${(file.size / (1024 * 1024)).toFixed(1)}MB)`, { id: toastId });
+            };
+            reader.readAsDataURL(file);
+          }
+        }
+      } catch (pdfErr) {
+        console.warn('PDF client read error:', pdfErr);
+        if (file.size <= 3.5 * 1024 * 1024) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            setAttachedFile({
+              name: file.name,
+              type: 'pdf',
+              base64: reader.result as string
+            });
+            toast.success(`Attached PDF: ${file.name}`, { id: toastId });
+          };
+          reader.readAsDataURL(file);
+        } else {
+          toast.error('Could not read PDF. Please copy and paste the text or select a smaller PDF.', { id: toastId });
+        }
+      }
     } else if (file.name.endsWith('.txt') || file.name.endsWith('.md') || file.type.startsWith('text/')) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -413,7 +454,7 @@ export function ChatGptSimplifier({
         setAttachedFile({
           name: file.name,
           type: 'text',
-          textPreview: content.slice(0, 4000)
+          textPreview: content.slice(0, 15000)
         });
         toast.success(`Attached notes: ${file.name}`);
       };
@@ -432,7 +473,7 @@ export function ChatGptSimplifier({
     const userTyped = textToSubmit || inputText;
     const promptToSend = userTyped.trim() || (attachedFile ? `Simplify and explain key concepts in attached document: "${attachedFile.name}"` : '');
 
-    if (!promptToSend.trim() && !attachedFile?.base64) {
+    if (!promptToSend.trim() && !attachedFile?.base64 && !attachedFile?.textPreview) {
       toast.error('Please type a concept or attach a document/photo.');
       return;
     }
@@ -441,8 +482,8 @@ export function ChatGptSimplifier({
     const currentFile = attachedFile;
     const userDisplayPrompt = currentQuote ? `Regarding "${currentQuote}": ${promptToSend}` : promptToSend;
     const apiPayloadText = currentQuote
-      ? `Regarding "${currentQuote}": ${promptToSend}${currentFile?.textPreview ? `\n\nAttached Notes Preview:\n${currentFile.textPreview}` : ''}`
-      : `${promptToSend}${currentFile?.textPreview ? `\n\nAttached Notes Preview:\n${currentFile.textPreview}` : ''}`;
+      ? `Regarding "${currentQuote}": ${promptToSend}${currentFile?.textPreview ? `\n\nAttached Document Content:\n${currentFile.textPreview}` : ''}`
+      : `${promptToSend}${currentFile?.textPreview ? `\n\nAttached Document Content:\n${currentFile.textPreview}` : ''}`;
 
     setSubmittedPrompt(userDisplayPrompt);
     setSubmittedFile(currentFile ? { name: currentFile.name, type: currentFile.type } : null);
@@ -474,13 +515,28 @@ export function ChatGptSimplifier({
           language: selectedLanguage,
           history: history.length > 0 ? history : undefined,
           imageBase64: currentFile?.type === 'image' ? currentFile.base64 : undefined,
-          pdfBase64: currentFile?.type === 'pdf' ? currentFile.base64 : undefined
+          pdfBase64: currentFile?.type === 'pdf' && !currentFile.textPreview ? currentFile.base64 : undefined
         })
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success || !data.note) {
-        toast.error(data.error || 'Unable to simplify note. Please try again.');
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        if (res.status === 413) {
+          toast.error('The attached file is too large for the network. Please paste the text or select a smaller excerpt.');
+          return;
+        }
+        if (res.status === 504) {
+          toast.error('The request timed out. Please try a shorter excerpt or paste the key paragraphs.');
+          return;
+        }
+        toast.error(`Server error (${res.status}). Please try again or paste the text.`);
+        return;
+      }
+
+      if (!res.ok || !data?.success || !data?.note) {
+        toast.error(data?.error || 'Unable to simplify note. Please try again.');
         return;
       }
 
@@ -517,8 +573,14 @@ export function ChatGptSimplifier({
       }
 
       setAnimatingTurnId(turnId);
-    } catch {
-      toast.error('Network connection issue. Please retry.');
+    } catch (err: any) {
+      console.error('Simplification error:', err);
+      const isNetworkErr = err?.name === 'TypeError' || (err?.message && err.message.toLowerCase().includes('failed to fetch'));
+      toast.error(
+        isNetworkErr
+          ? 'Network connection issue. Please check your internet connection and retry.'
+          : (err?.message || 'Unable to simplify note. Please try again.')
+      );
     } finally {
       setLoading(false);
       setSubmittedPrompt(null);

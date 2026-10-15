@@ -20,6 +20,8 @@ const requestSchema = z.object({
   message: 'Please provide academic text, attach a document/PDF, or upload an image.'
 });
 
+export const maxDuration = 30;
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -46,28 +48,58 @@ export async function POST(req: NextRequest) {
         const pdfParseModule = await import('pdf-parse');
         let extractedPdfText = '';
 
-        if ((pdfParseModule as any).PDFParse) {
-          const parser = new (pdfParseModule as any).PDFParse({ data: pdfBuffer });
-          const result = await parser.getText();
-          extractedPdfText = result?.text?.trim() || '';
-          if (typeof parser.destroy === 'function') {
-            await parser.destroy();
+        const parsePromise = (async () => {
+          if ((pdfParseModule as any).PDFParse) {
+            const parser = new (pdfParseModule as any).PDFParse({ data: pdfBuffer });
+            const result = await parser.getText();
+            if (typeof parser.destroy === 'function') {
+              try { await parser.destroy(); } catch {}
+            }
+            return result?.text?.trim() || '';
+          } else if (typeof (pdfParseModule as any).default === 'function') {
+            const result = await (pdfParseModule as any).default(pdfBuffer);
+            return result?.text?.trim() || '';
+          } else if (typeof pdfParseModule === 'function') {
+            const result = await (pdfParseModule as any)(pdfBuffer);
+            return result?.text?.trim() || '';
           }
-        } else if (typeof (pdfParseModule as any).default === 'function') {
-          const result = await (pdfParseModule as any).default(pdfBuffer);
-          extractedPdfText = result?.text?.trim() || '';
-        } else if (typeof pdfParseModule === 'function') {
-          const result = await (pdfParseModule as any)(pdfBuffer);
-          extractedPdfText = result?.text?.trim() || '';
-        }
+          return '';
+        })();
+
+        // 7 second timeout for PDF parsing so function does not hang
+        const timeoutPromise = new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('PDF parsing timed out')), 7000)
+        );
+
+        extractedPdfText = await Promise.race([parsePromise, timeoutPromise]).catch(err => {
+          console.warn('PDF parse timeout or error:', err);
+          return '';
+        });
 
         if (extractedPdfText) {
           processedText = text.trim()
             ? `User Prompt: ${text.trim()}\n\nContent from attached document:\n"""\n${extractedPdfText.slice(0, 12000)}\n"""`
             : `Please simplify and break down key concepts from this attached document:\n"""\n${extractedPdfText.slice(0, 12000)}\n"""`;
+        } else if (!text.trim()) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Could not extract readable text from this PDF. It may be a scanned document or password-protected. Please paste the text or attach a photo.'
+            },
+            { status: 400 }
+          );
         }
       } catch (pdfErr) {
         console.error('PDF extraction error:', pdfErr);
+        if (!text.trim()) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Could not parse this PDF. Please paste the text directly.'
+            },
+            { status: 400 }
+          );
+        }
       }
     }
 
