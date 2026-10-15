@@ -2,6 +2,8 @@
 
 PlainNotes is an AI-powered academic simplifier designed for African students. It breaks down complex textbooks, lecture slides, academic documents, and exam topics into crystal-clear explanations using authentic African dialects, relatable real-world analogies, and interactive quizzes.
 
+**LIVE URL:** [https://andela-plainnotes.vercel.app/app](https://andela-plainnotes.vercel.app/app)
+
 ## Features
 
 - **Multi-Dialect & Language Support**: Learn in authentic Nigerian Pidgin, Yoruba, Hausa, Igbo, Kenyan Swahili, French, or plain English.
