@@ -6,6 +6,7 @@ interface GenerateOptions {
   subject?: string;
   level?: 'secondary' | 'tertiary' | 'vocational';
   imageBase64?: string;
+  history?: { role: 'user' | 'assistant'; content: string }[];
 }
 
 interface AIResultPayload {
@@ -56,7 +57,7 @@ const LANGUAGE_INSTRUCTIONS: Record<LanguageCode, string> = {
 };
 
 export async function simplifyAcademicText(options: GenerateOptions): Promise<SimplifiedNote> {
-  const { text, language, subject, level = 'secondary', imageBase64 } = options;
+  const { text, language, subject, level = 'secondary', imageBase64, history } = options;
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 
@@ -81,7 +82,7 @@ You must return ONLY a strict JSON object with this exact shape:
 {
   "title": "Short punchy topic title (under 8 words)",
   "subject": "Standard subject name e.g. Biology, Physics, Economics, Computer Science",
-  "simplifiedText": "2 to 3 paragraphs breaking down the core concept in pure plain words without dense jargon in ${language.toUpperCase()}. Explain WHY it matters and HOW it works step-by-step.",
+  "simplifiedText": "In-depth, comprehensive explanation (4 to 6 detailed paragraphs or sections) breaking down the core concept thoroughly in ${language.toUpperCase()}. You MUST include a step-by-step breakdown of how the mechanism works, concrete practical examples, and structured bullet points or numbered lists for key steps/components. Explain WHY it matters, WHAT happens when things go wrong, and HOW to apply it in exams or practice. Do NOT make it brief or superficial.",
   "localAnalogy": "A brilliant, vivid African real-world analogy explaining this exact concept using daily life scenarios specific to the chosen language/region. Make it sticky and unforgettable.",
   "examEssentials": [
     "Crucial point 1 examiners look for in marking schemes",
@@ -95,7 +96,6 @@ You must return ONLY a strict JSON object with this exact shape:
       "answerIndex": 0,
       "explanation": "Why this answer is correct and why other options are incorrect"
     }
-    // EXACTLY 10 QUESTIONS in total covering different angles of the concept
   ],
   "quiz": {
     "question": "Primary question testing core understanding",
@@ -131,6 +131,26 @@ Rules:
         ]
       : `Original Academic Text to simplify:\n"""\n${text.slice(0, 4000)}\n"""`;
 
+    const chatMessages: any[] = [
+      { role: 'system', content: systemPrompt }
+    ];
+
+    if (history && Array.isArray(history)) {
+      for (const h of history.slice(-6)) {
+        if (h && h.content) {
+          chatMessages.push({
+            role: h.role === 'assistant' ? 'assistant' : 'user',
+            content: h.content.slice(0, 1500)
+          });
+        }
+      }
+    }
+
+    chatMessages.push({
+      role: 'user',
+      content: userMessageContent
+    });
+
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -139,14 +159,8 @@ Rules:
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: userMessageContent
-          }
-        ],
-        temperature: 0.65,
+        messages: chatMessages,
+        max_tokens: 3500,
         response_format: { type: 'json_object' }
       }),
       signal: controller.signal

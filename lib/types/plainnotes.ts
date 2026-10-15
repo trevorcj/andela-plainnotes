@@ -90,6 +90,18 @@ export interface SocraticQuiz {
   explanation: string;
 }
 
+export interface ChatTurn {
+  id: string;
+  userPrompt: string;
+  attachedFile?: { name: string; type: string } | null;
+  quotedText?: string | null;
+  simplifiedText: string;
+  localAnalogy?: string;
+  examEssentials?: string[];
+  quizzes?: SocraticQuiz[];
+  createdAt: string;
+}
+
 export interface SimplifiedNote {
   id: string;
   userId?: string | null;
@@ -102,10 +114,11 @@ export interface SimplifiedNote {
   localAnalogy: string;
   examEssentials: string[];
   quiz: SocraticQuiz;
-  quizzes?: SocraticQuiz[]; // 10 interactive questions
+  quizzes?: SocraticQuiz[];
   whatsappText: string;
   isCurated?: boolean;
   createdAt: string;
+  turns?: ChatTurn[];
 }
 
 export interface SimplifyRequest {

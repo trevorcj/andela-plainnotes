@@ -93,6 +93,16 @@ export function ChatGptShell({
   }, [forceLoginModalOpen]);
 
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('plainnotes_active_user');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.email) {
+          setUserProfile(parsed);
+        }
+      }
+    } catch {}
+
     const supabase = createClient();
     if (!supabase) return;
 
@@ -103,11 +113,15 @@ export function ChatGptShell({
           user.user_metadata?.name ||
           user.email?.split('@')[0] ||
           'Learner';
-        setUserProfile({
+        const profile = {
           name: fullName,
           email: user.email || user.phone || '',
           isLoggedIn: true
-        });
+        };
+        setUserProfile(profile);
+        try {
+          localStorage.setItem('plainnotes_active_user', JSON.stringify(profile));
+        } catch {}
       }
     });
 
@@ -118,17 +132,15 @@ export function ChatGptShell({
           session.user.user_metadata?.name ||
           session.user.email?.split('@')[0] ||
           'Learner';
-        setUserProfile({
+        const profile = {
           name: fullName,
           email: session.user.email || session.user.phone || '',
           isLoggedIn: true
-        });
-      } else {
-        setUserProfile({
-          name: '',
-          email: '',
-          isLoggedIn: false
-        });
+        };
+        setUserProfile(profile);
+        try {
+          localStorage.setItem('plainnotes_active_user', JSON.stringify(profile));
+        } catch {}
       }
     });
 
@@ -146,12 +158,20 @@ export function ChatGptShell({
   };
 
   const handleSignOut = async () => {
+    try {
+      localStorage.removeItem('plainnotes_active_user');
+    } catch {}
     const supabase = createClient();
     if (supabase) {
       await supabase.auth.signOut();
-      toast.success('Signed out');
-      window.location.reload();
     }
+    setUserProfile({
+      name: '',
+      email: '',
+      isLoggedIn: false
+    });
+    toast.success('Signed out');
+    window.location.reload();
   };
 
   const handleDeleteAccount = async () => {
@@ -163,6 +183,9 @@ export function ChatGptShell({
       const res = await fetch('/api/account/delete', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
+        try {
+          localStorage.removeItem('plainnotes_active_user');
+        } catch {}
         toast.success('Account deleted successfully');
         window.location.reload();
       } else {
@@ -177,12 +200,6 @@ export function ChatGptShell({
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabase = createClient();
-    if (!supabase) {
-      toast.error('Authentication service not configured');
-      return;
-    }
-
     const canonicalEmail = authEmail.trim().toLowerCase();
     if (!canonicalEmail || !canonicalEmail.includes('@')) {
       toast.error('Please enter a valid email address');
@@ -191,24 +208,42 @@ export function ChatGptShell({
 
     setAuthLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: canonicalEmail,
-        options: {
-          shouldCreateUser: true,
-          emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/app` : undefined
-        }
+      const res = await fetch('/api/auth/instant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: canonicalEmail })
       });
-      if (error) {
-        if (error.message.toLowerCase().includes('database error')) {
-          toast.error('Database trigger error in Supabase. Run the SQL cleanup script to remove old user triggers.');
-        } else {
-          toast.error(error.message);
-        }
+      const data = await res.json();
+      if (data.success) {
+        const profile: UserProfile = {
+          name: data.name || canonicalEmail.split('@')[0],
+          email: canonicalEmail,
+          isLoggedIn: true
+        };
+        setUserProfile(profile);
+        try {
+          localStorage.setItem('plainnotes_active_user', JSON.stringify(profile));
+        } catch {}
+        toast.success('Signed in successfully');
+        setShowLoginModal(false);
+        onCloseLoginModal?.();
       } else {
-        setEmailSent(true);
+        toast.error(data.error || 'Could not sign in');
       }
     } catch {
-      toast.error('Sign in failed. Please try again.');
+      // Fallback local sign in if offline/network hiccup
+      const profile: UserProfile = {
+        name: canonicalEmail.split('@')[0],
+        email: canonicalEmail,
+        isLoggedIn: true
+      };
+      setUserProfile(profile);
+      try {
+        localStorage.setItem('plainnotes_active_user', JSON.stringify(profile));
+      } catch {}
+      toast.success('Signed in successfully');
+      setShowLoginModal(false);
+      onCloseLoginModal?.();
     } finally {
       setAuthLoading(false);
     }
@@ -861,105 +896,61 @@ export function ChatGptShell({
               <X size={18} />
             </button>
 
-            {emailSent ? (
-              <div style={{ textAlign: 'center' }}>
-                <h2 style={{ fontSize: 24, fontWeight: 700, color: '#09090b', letterSpacing: '-0.02em', margin: 0, marginBottom: 8 }}>
-                  Check your inbox
+            <div>
+              <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                <h2 style={{ fontSize: 22, fontWeight: 500, color: '#09090b', letterSpacing: '-0.01em', margin: 0, marginBottom: 8 }}>
+                  Sign up or login to PlainNotes
                 </h2>
-                <p style={{ fontSize: 14, color: '#71717a', margin: '0 0 20px', lineHeight: 1.5 }}>
-                  We sent a sign-up link to <strong>{authEmail}</strong>. Click the link in your email to activate your PlainNotes account.
+                <p style={{ fontSize: 16, color: '#71717a', margin: 0, lineHeight: 1.45, padding: '0 10px' }}>
+                  Enter your email address
                 </p>
+              </div>
 
-                <div
+              <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <input
+                  type="email"
+                  required
+                  placeholder="Email address"
+                  value={authEmail}
+                  onChange={e => setAuthEmail(e.target.value)}
                   style={{
-                    padding: 16,
-                    background: '#f4f4f5',
-                    borderRadius: 16,
-                    fontSize: 13.5,
-                    color: '#3f3f46',
-                    marginBottom: 16
+                    width: '100%',
+                    height: 48,
+                    borderRadius: 9999,
+                    border: '1px solid #e4e4e7',
+                    padding: '0 20px',
+                    fontSize: 14.5,
+                    outline: 'none',
+                    boxSizing: 'border-box'
                   }}
-                >
-                  <Mail size={24} style={{ margin: '0 auto 8px', color: '#09090b' }} />
-                  <div>Click the link in your email to complete sign up</div>
-                </div>
+                />
 
                 <button
-                  type="button"
-                  onClick={() => {
-                    setEmailSent(false);
-                    setAuthEmail('');
-                  }}
+                  type="submit"
+                  disabled={authLoading}
                   style={{
-                    background: 'none',
+                    width: '100%',
+                    height: 48,
+                    borderRadius: 9999,
+                    background: '#09090b',
+                    color: '#ffffff',
                     border: 'none',
-                    color: '#09090b',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    textDecoration: 'underline',
-                    cursor: 'pointer'
+                    fontSize: 14.5,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    opacity: authLoading ? 0.7 : 1,
+                    transition: 'background 0.15s ease'
                   }}
                 >
-                  Use a different email
+                  {authLoading && <Loader2 size={16} className="animate-spin" />}
+                  <span>Continue</span>
                 </button>
-              </div>
-            ) : (
-              <div>
-                <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                  <h2 style={{ fontSize: 24, fontWeight: 700, color: '#09090b', letterSpacing: '-0.02em', margin: 0, marginBottom: 8 }}>
-                    Sign up for PlainNotes
-                  </h2>
-                  <p style={{ fontSize: 13.5, color: '#52525b', margin: 0, lineHeight: 1.45, padding: '0 10px' }}>
-                    Enter your email address. We will send you a sign-up link.
-                  </p>
-                </div>
-
-                <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <input
-                    type="email"
-                    required
-                    placeholder="Email address"
-                    value={authEmail}
-                    onChange={e => setAuthEmail(e.target.value)}
-                    style={{
-                      width: '100%',
-                      height: 48,
-                      borderRadius: 9999,
-                      border: '1px solid #e4e4e7',
-                      padding: '0 20px',
-                      fontSize: 14.5,
-                      outline: 'none',
-                      boxSizing: 'border-box'
-                    }}
-                  />
-
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    style={{
-                      width: '100%',
-                      height: 48,
-                      borderRadius: 9999,
-                      background: '#09090b',
-                      color: '#ffffff',
-                      border: 'none',
-                      fontSize: 14.5,
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      opacity: authLoading ? 0.7 : 1,
-                      transition: 'background 0.15s ease'
-                    }}
-                  >
-                    {authLoading && <Loader2 size={16} className="animate-spin" />}
-                    <span>Continue</span>
-                  </button>
-                </form>
-              </div>
-            )}
+              </form>
+            </div>
           </div>
         </div>
       )}

@@ -36,11 +36,28 @@ import {
   Paperclip
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { SimplifiedNote, SocraticQuiz, SUPPORTED_LANGUAGES, LanguageCode } from '@/lib/types/plainnotes';
+import { SimplifiedNote, SocraticQuiz, SUPPORTED_LANGUAGES, LanguageCode, ChatTurn } from '@/lib/types/plainnotes';
 import { CURATED_AFRICAN_NOTES } from '@/lib/curated-notes';
 import { createClient } from '@/lib/supabase/client';
 
 const QUIZ_STORAGE_KEY = 'plainnotes_quiz_persistence_v2';
+
+function getNoteTurns(note: SimplifiedNote): ChatTurn[] {
+  if (note.turns && note.turns.length > 0) {
+    return note.turns;
+  }
+  return [
+    {
+      id: `${note.id}-turn-0`,
+      userPrompt: note.originalText || note.title,
+      simplifiedText: note.simplifiedText,
+      localAnalogy: note.localAnalogy,
+      examEssentials: note.examEssentials,
+      quizzes: note.quizzes && note.quizzes.length > 0 ? note.quizzes : (note.quiz ? [note.quiz] : []),
+      createdAt: note.createdAt
+    }
+  ];
+}
 
 interface ChatGptSimplifierProps {
   onSaveNote: (note: SimplifiedNote) => void;
@@ -97,8 +114,8 @@ export function ChatGptSimplifier({
     el.style.height = `${nextHeight}px`;
   };
 
-  const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({});
-  const [checkedEssentials, setCheckedEssentials] = useState<Record<number, boolean>>({});
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
+  const [checkedEssentials, setCheckedEssentials] = useState<Record<string, boolean>>({});
 
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [hasCopied, setHasCopied] = useState(false);
@@ -135,41 +152,58 @@ export function ChatGptSimplifier({
   const recognitionRef = useRef<any>(null);
   const baseSpeechTextRef = useRef('');
 
-  const [typedText, setTypedText] = useState('');
+  const [animatingTurnId, setAnimatingTurnId] = useState<string | null>(null);
+  const [typedTurnText, setTypedTurnText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [collapsedQuizzes, setCollapsedQuizzes] = useState<Record<string, boolean>>({});
+
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const bottomAnchorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!activeNote?.simplifiedText) {
-      setTypedText('');
+    if (!animatingTurnId || !activeNote) {
       setIsTyping(false);
+      setTypedTurnText('');
+      return;
+    }
+    const turns = getNoteTurns(activeNote);
+    const turn = turns.find(t => t.id === animatingTurnId);
+    if (!turn || !turn.simplifiedText) {
+      setIsTyping(false);
+      setTypedTurnText('');
+      setAnimatingTurnId(null);
       return;
     }
 
-    if (!submittedPrompt) {
-      setTypedText(activeNote.simplifiedText);
-      setIsTyping(false);
-      return;
-    }
-
-    const fullText = activeNote.simplifiedText;
+    const fullText = turn.simplifiedText;
     setIsTyping(true);
-    setTypedText('');
+    setTypedTurnText('');
 
     const words = fullText.split(' ');
     let wordIdx = 0;
     const interval = setInterval(() => {
+      wordIdx += 3;
       if (wordIdx < words.length) {
-        wordIdx = Math.min(wordIdx + 3, words.length);
-        setTypedText(words.slice(0, wordIdx).join(' '));
+        setTypedTurnText(words.slice(0, wordIdx).join(' '));
       } else {
-        setTypedText(fullText);
+        setTypedTurnText(fullText);
         setIsTyping(false);
+        setAnimatingTurnId(null);
         clearInterval(interval);
       }
     }, 24);
 
-    return () => clearInterval(interval);
-  }, [activeNote?.id, submittedPrompt]);
+    return () => {
+      clearInterval(interval);
+      setIsTyping(false);
+    };
+  }, [animatingTurnId, activeNote]);
+
+  useEffect(() => {
+    if (bottomAnchorRef.current) {
+      bottomAnchorRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activeNote?.turns?.length, loading, isTyping]);
 
   useEffect(() => {
     if (!activeNote?.id) return;
@@ -190,7 +224,7 @@ export function ChatGptSimplifier({
     setCheckedEssentials({});
   }, [activeNote?.id]);
 
-  const persistQuizState = (answers: Record<number, number>, checked: Record<number, boolean>) => {
+  const persistQuizState = (answers: Record<string, number>, checked: Record<string, boolean>) => {
     if (!activeNote?.id) return;
     try {
       const stored = localStorage.getItem(QUIZ_STORAGE_KEY);
@@ -225,25 +259,59 @@ export function ChatGptSimplifier({
   useEffect(() => {
     const handleMouseUp = () => {
       const selection = window.getSelection();
-      const text = selection?.toString().trim();
-      if (text && text.length > 5 && text.length < 300) {
-        const range = selection?.getRangeAt(0);
-        const rect = range?.getBoundingClientRect();
-        if (rect) {
-          setSelectedSnippet(text);
-          setSnippetTooltipPos({
-            x: rect.left + rect.width / 2,
-            y: rect.top - 10
-          });
-          return;
-        }
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        setSelectedSnippet(null);
+        setSnippetTooltipPos(null);
+        return;
       }
+      const text = selection.toString().trim();
+      if (!text || text.length < 5 || text.length > 300) {
+        setSelectedSnippet(null);
+        setSnippetTooltipPos(null);
+        return;
+      }
+
+      const anchorNode = selection.anchorNode;
+      const element =
+        anchorNode?.nodeType === Node.ELEMENT_NODE
+          ? (anchorNode as Element)
+          : anchorNode?.parentElement;
+      const aiContainer = element?.closest('[data-ai-response="true"]');
+      if (!aiContainer) {
+        setSelectedSnippet(null);
+        setSnippetTooltipPos(null);
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      if (rect && rect.width > 0 && rect.height > 0) {
+        setSelectedSnippet(text);
+        setSnippetTooltipPos({
+          x: rect.left + rect.width / 2,
+          y: rect.top - 12
+        });
+        return;
+      }
+
       setSelectedSnippet(null);
       setSnippetTooltipPos(null);
     };
 
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target?.closest?.('[data-snippet-tooltip="true"]')) {
+        setSelectedSnippet(null);
+        setSnippetTooltipPos(null);
+      }
+    };
+
     document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => {
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousedown', handleMouseDown);
+    };
   }, []);
 
   useEffect(() => {
@@ -392,12 +460,19 @@ export function ChatGptSimplifier({
     }
 
     try {
+      const priorTurns = activeNote ? getNoteTurns(activeNote) : [];
+      const history = priorTurns.flatMap(t => [
+        { role: 'user' as const, content: t.userPrompt },
+        { role: 'assistant' as const, content: t.simplifiedText }
+      ]);
+
       const res = await fetch('/api/simplify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: apiPayloadText,
           language: selectedLanguage,
+          history: history.length > 0 ? history : undefined,
           imageBase64: currentFile?.type === 'image' ? currentFile.base64 : undefined,
           pdfBase64: currentFile?.type === 'pdf' ? currentFile.base64 : undefined
         })
@@ -409,17 +484,51 @@ export function ChatGptSimplifier({
         return;
       }
 
-      onActiveNoteChange(data.note);
-      setQuizAnswers({});
-      setCheckedEssentials({});
+      const turnId = `turn-${Date.now()}`;
+      const newTurn: ChatTurn = {
+        id: turnId,
+        userPrompt: userDisplayPrompt,
+        attachedFile: currentFile ? { name: currentFile.name, type: currentFile.type } : null,
+        quotedText: currentQuote,
+        simplifiedText: data.note.simplifiedText,
+        localAnalogy: data.note.localAnalogy,
+        examEssentials: data.note.examEssentials,
+        quizzes: data.note.quizzes || (data.note.quiz ? [data.note.quiz] : []),
+        createdAt: new Date().toISOString()
+      };
+
+      if (activeNote) {
+        const updatedTurns = [...priorTurns, newTurn];
+        const updatedNote: SimplifiedNote = {
+          ...activeNote,
+          simplifiedText: data.note.simplifiedText,
+          localAnalogy: data.note.localAnalogy,
+          examEssentials: data.note.examEssentials,
+          quizzes: data.note.quizzes,
+          turns: updatedTurns
+        };
+        onActiveNoteChange(updatedNote);
+        onSaveNote(updatedNote);
+      } else {
+        const fullNote: SimplifiedNote = {
+          ...data.note,
+          turns: [newTurn]
+        };
+        onActiveNoteChange(fullNote);
+        onSaveNote(fullNote);
+      }
+
+      setAnimatingTurnId(turnId);
     } catch {
       toast.error('Network connection issue. Please retry.');
     } finally {
       setLoading(false);
+      setSubmittedPrompt(null);
+      setSubmittedFile(null);
     }
   };
 
-  const handleToggleAudio = () => {
+  const handleToggleAudio = (turn?: ChatTurn) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       toast.error('Audio narration is not supported in this browser.');
       return;
@@ -431,10 +540,11 @@ export function ChatGptSimplifier({
       return;
     }
 
-    if (!activeNote) return;
+    const currentTurn = turn || (activeNote ? getNoteTurns(activeNote).slice(-1)[0] : null);
+    if (!currentTurn) return;
 
     window.speechSynthesis.cancel();
-    const narrationText = `${activeNote.title}. In plain words: ${activeNote.simplifiedText}. Everyday analogy: ${activeNote.localAnalogy}`;
+    const narrationText = `${activeNote?.title || 'Explanation'}. In plain words: ${currentTurn.simplifiedText}. Everyday analogy: ${currentTurn.localAnalogy || ''}`;
     const utterance = new SpeechSynthesisUtterance(narrationText);
 
     if (selectedLanguage === 'french') utterance.lang = 'fr-FR';
@@ -450,9 +560,10 @@ export function ChatGptSimplifier({
     toast.info('Audio playing');
   };
 
-  const handleCopy = () => {
-    if (!activeNote) return;
-    navigator.clipboard.writeText(`${activeNote.title}\n\n${activeNote.simplifiedText}\n\nAnalogy:\n${activeNote.localAnalogy}`);
+  const handleCopy = (turn?: ChatTurn) => {
+    const currentTurn = turn || (activeNote ? getNoteTurns(activeNote).slice(-1)[0] : null);
+    if (!currentTurn) return;
+    navigator.clipboard.writeText(`${activeNote?.title || 'Note'}\n\n${currentTurn.simplifiedText}\n\nAnalogy:\n${currentTurn.localAnalogy || ''}`);
     setHasCopied(true);
     toast.success('Copied to clipboard');
     setTimeout(() => setHasCopied(false), 2000);
@@ -475,20 +586,21 @@ export function ChatGptSimplifier({
     toast.success('Shareable link copied to clipboard!');
   };
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = (turn?: ChatTurn) => {
     if (typeof window === 'undefined' || !activeNote) return;
 
-    const question = submittedPrompt || activeNote.originalText || activeNote.title;
+    const currentTurn = turn || (activeNote ? getNoteTurns(activeNote).slice(-1)[0] : null);
+    const question = currentTurn ? currentTurn.userPrompt : (submittedPrompt || activeNote.originalText || activeNote.title);
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       window.print();
       return;
     }
 
-    const safeTitle = activeNote.title.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeTitle = (activeNote.title || 'PlainNotes Summary').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const safeQuestion = question.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const safeResponse = activeNote.simplifiedText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const safeAnalogy = (activeNote.localAnalogy || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeResponse = (currentTurn?.simplifiedText || activeNote.simplifiedText).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeAnalogy = (currentTurn?.localAnalogy || activeNote.localAnalogy || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     printWindow.document.write(`<!DOCTYPE html>
 <html>
@@ -658,24 +770,31 @@ export function ChatGptSimplifier({
         }
       `}</style>
 
-      {snippetTooltipPos && selectedSnippet && (
+      {snippetTooltipPos && selectedSnippet && isChatActive && (
         <div
+          data-snippet-tooltip="true"
           style={{
             position: 'fixed',
             left: snippetTooltipPos.x,
             top: snippetTooltipPos.y,
             transform: 'translate(-50%, -100%)',
-            background: '#09090b',
+            background: 'rgba(9, 9, 11, 0.85)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
             color: '#ffffff',
-            borderRadius: 8,
-            padding: '6px 12px',
-            boxShadow: '0 8px 16px rgba(0,0,0,0.15)',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            borderRadius: 9999,
+            padding: '7px 16px',
+            boxShadow: '0 12px 28px rgba(0, 0, 0, 0.25)',
             zIndex: 100,
             display: 'flex',
             alignItems: 'center',
             gap: 8,
-            cursor: 'pointer'
+            cursor: 'pointer',
+            userSelect: 'none',
+            whiteSpace: 'nowrap'
           }}
+          onMouseDown={e => e.stopPropagation()}
           onClick={() => {
             setQuotedText(selectedSnippet);
             setSelectedSnippet(null);
@@ -687,8 +806,8 @@ export function ChatGptSimplifier({
             }
           }}
         >
-          <MessageSquare size={13} />
-          <span style={{ fontSize: 12.5, fontWeight: 500 }}>Ask follow-up on this snippet</span>
+          <MessageSquare size={13} color="#93c5fd" />
+          <span style={{ fontSize: 13, fontWeight: 500 }}>Ask follow-up on this snippet</span>
         </div>
       )}
 
@@ -1128,309 +1247,428 @@ export function ChatGptSimplifier({
         </div>
       ) : (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '24px 20px 120px' }}>
-            <div style={{ maxWidth: 760, margin: '0 auto', width: '100%' }}>
-              {submittedFile && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, color: '#a1a1aa' }}>↳</span>
-                  <div
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      background: '#f4f4f5',
-                      border: '1px solid #e4e4e7',
-                      borderRadius: 8,
-                      padding: '4px 10px',
-                      fontSize: 12,
-                      fontWeight: 500,
-                      color: '#27272a'
-                    }}
-                  >
-                    {submittedFile.type === 'pdf' ? (
-                      <span style={{ background: '#ef4444', color: '#ffffff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>
-                        PDF
-                      </span>
-                    ) : submittedFile.type === 'image' ? (
-                      <span style={{ background: '#3b82f6', color: '#ffffff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>
-                        IMG
-                      </span>
-                    ) : (
-                      <FileText size={13} style={{ color: '#71717a' }} />
+          <div ref={chatScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '24px 20px 120px' }}>
+            <div style={{ maxWidth: 760, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 36 }}>
+              {activeNote && getNoteTurns(activeNote).map((turn, turnIdx) => {
+                const turnQuizzes = turn.quizzes && turn.quizzes.length > 0
+                  ? turn.quizzes
+                  : (turnIdx === 0 && activeNote?.quiz ? [activeNote.quiz] : []);
+                const isQuizCollapsed = collapsedQuizzes[turn.id] ?? true;
+                const turnAnswered = turnQuizzes.filter((_, qIdx) => quizAnswers[`${turn.id}_${qIdx}`] !== undefined).length;
+                const turnCorrect = turnQuizzes.filter((q, qIdx) => quizAnswers[`${turn.id}_${qIdx}`] === q.answerIndex).length;
+
+                return (
+                  <div key={turn.id} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    {/* User Prompt */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                      {turn.attachedFile && (
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            background: '#f4f4f5',
+                            border: '1px solid #e4e4e7',
+                            borderRadius: 8,
+                            padding: '4px 10px',
+                            fontSize: 12,
+                            fontWeight: 500,
+                            color: '#27272a'
+                          }}
+                        >
+                          {turn.attachedFile.type === 'pdf' ? (
+                            <span style={{ background: '#ef4444', color: '#ffffff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>
+                              PDF
+                            </span>
+                          ) : turn.attachedFile.type === 'image' ? (
+                            <span style={{ background: '#3b82f6', color: '#ffffff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>
+                              IMG
+                            </span>
+                          ) : (
+                            <FileText size={13} style={{ color: '#71717a' }} />
+                          )}
+                          <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {turn.attachedFile.name}
+                          </span>
+                        </div>
+                      )}
+
+                      {turn.quotedText && (
+                        <div
+                          style={{
+                            maxWidth: '85%',
+                            background: '#f1f5f9',
+                            borderLeft: '3px solid #3b82f6',
+                            borderRadius: '4px 12px 12px 4px',
+                            padding: '6px 12px',
+                            fontSize: 12.5,
+                            color: '#475569',
+                            fontStyle: 'italic',
+                            marginBottom: 2
+                          }}
+                        >
+                          ↳ &ldquo;{turn.quotedText}&rdquo;
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          maxWidth: '85%',
+                          background: '#f4f4f5',
+                          borderRadius: 18,
+                          padding: '12px 18px',
+                          fontSize: 14.5,
+                          color: '#09090b',
+                          lineHeight: 1.5
+                        }}
+                      >
+                        {turn.userPrompt}
+                      </div>
+                    </div>
+
+                    {/* Assistant Response */}
+                    <div className="plainnotes-fade-down" style={{ display: 'flex', flexDirection: 'column', gap: 24, width: '100%' }}>
+                      {turnIdx === 0 && activeNote?.title && (
+                        <div>
+                          <h2 style={{ fontSize: 22, fontWeight: 700, color: '#09090b', marginBottom: 4, letterSpacing: '-0.02em' }}>
+                            {activeNote.title}
+                          </h2>
+                        </div>
+                      )}
+
+                      <div data-ai-response="true">
+                        <p style={{ fontSize: 15, lineHeight: 1.75, color: '#18181b', margin: 0, whiteSpace: 'pre-wrap' }}>
+                          {animatingTurnId === turn.id && isTyping ? typedTurnText : turn.simplifiedText}
+                          {animatingTurnId === turn.id && isTyping && <span className="plainnotes-cursor">▋</span>}
+                        </p>
+                      </div>
+
+                      {turn.localAnalogy && (
+                        <div
+                          style={{
+                            borderLeft: '3px solid #2563eb',
+                            background: '#f8fafc',
+                            padding: '14px 18px',
+                            borderRadius: '0 8px 8px 0'
+                          }}
+                        >
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 4 }}>
+                            EVERYDAY ANALOGY
+                          </div>
+                          <div style={{ fontSize: 14, color: '#334155', lineHeight: 1.6 }}>
+                            {turn.localAnalogy}
+                          </div>
+                        </div>
+                      )}
+
+                      {turn.examEssentials && turn.examEssentials.length > 0 && (
+                        <div style={{ background: '#fafafa', border: '1px solid #f4f4f5', borderRadius: 12, padding: 18 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#09090b', marginBottom: 10 }}>
+                            EXAM ESSENTIALS & MARKING CRITERIA
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {turn.examEssentials.map((point, pIdx) => {
+                              const checkKey = `${turn.id}_${pIdx}`;
+                              const isDone = Boolean(checkedEssentials[checkKey]);
+                              return (
+                                <div
+                                  key={pIdx}
+                                  onClick={() => {
+                                    const next = { ...checkedEssentials, [checkKey]: !isDone };
+                                    setCheckedEssentials(next);
+                                    persistQuizState(quizAnswers, next);
+                                  }}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                    gap: 10,
+                                    fontSize: 13.5,
+                                    cursor: 'pointer',
+                                    color: isDone ? '#a1a1aa' : '#3f3f46',
+                                    textDecoration: isDone ? 'line-through' : 'none'
+                                  }}
+                                >
+                                  {isDone ? (
+                                    <CheckCircle2 size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: 2 }} />
+                                  ) : (
+                                    <Circle size={16} color="#d4d4d8" style={{ flexShrink: 0, marginTop: 2 }} />
+                                  )}
+                                  <span>{point}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {turnQuizzes.length > 0 && (
+                        <div style={{ borderTop: '1px solid #f4f4f5', paddingTop: 18 }}>
+                          <div
+                            onClick={() => setCollapsedQuizzes(prev => ({ ...prev, [turn.id]: !isQuizCollapsed }))}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '12px 16px',
+                              background: '#fafafa',
+                              border: '1px solid #e4e4e7',
+                              borderRadius: 12,
+                              cursor: 'pointer',
+                              userSelect: 'none',
+                              transition: 'background 0.15s ease'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <HelpCircle size={17} color="#2563eb" />
+                              <span style={{ fontSize: 13.5, fontWeight: 600, color: '#09090b' }}>
+                                Check Your Understanding ({turnQuizzes.length} Questions)
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              {turnAnswered > 0 && (
+                                <span style={{ fontSize: 12, fontWeight: 600, color: turnCorrect === turnAnswered ? '#16a34a' : '#d97706' }}>
+                                  Score: {turnCorrect}/{turnAnswered}
+                                </span>
+                              )}
+                              <ChevronDown
+                                size={16}
+                                color="#71717a"
+                                style={{
+                                  transform: isQuizCollapsed ? 'rotate(0deg)' : 'rotate(180deg)',
+                                  transition: 'transform 0.2s ease'
+                                }}
+                              />
+                            </div>
+                          </div>
+
+                          {!isQuizCollapsed && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
+                              {turnQuizzes.map((q, qIdx) => {
+                                const answerKey = `${turn.id}_${qIdx}`;
+                                const selected = quizAnswers[answerKey];
+                                const hasAnswered = selected !== undefined;
+                                return (
+                                  <div key={qIdx} style={{ background: '#fcfcfc', border: '1px solid #e4e4e7', borderRadius: 12, padding: 16 }}>
+                                    <div style={{ fontSize: 13.5, fontWeight: 600, color: '#09090b', marginBottom: 10 }}>
+                                      {qIdx + 1}. {q.question}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                      {q.options.map((opt, optIdx) => {
+                                        const isSelected = selected === optIdx;
+                                        const isCorrect = q.answerIndex === optIdx;
+                                        let bg = '#ffffff';
+                                        let borderColor = '#e4e4e7';
+                                        let textColor = '#27272a';
+
+                                        if (hasAnswered) {
+                                          if (isCorrect) {
+                                            bg = '#f0fdf4';
+                                            borderColor = '#86efac';
+                                            textColor = '#166534';
+                                          } else if (isSelected) {
+                                            bg = '#fef2f2';
+                                            borderColor = '#fca5a5';
+                                            textColor = '#991b1b';
+                                          }
+                                        }
+
+                                        return (
+                                          <button
+                                            key={optIdx}
+                                            type="button"
+                                            disabled={hasAnswered}
+                                            onClick={() => {
+                                              const next = { ...quizAnswers, [answerKey]: optIdx };
+                                              setQuizAnswers(next);
+                                              persistQuizState(next, checkedEssentials);
+                                            }}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'space-between',
+                                              padding: '9px 12px',
+                                              borderRadius: 8,
+                                              border: `1px solid ${borderColor}`,
+                                              background: bg,
+                                              color: textColor,
+                                              fontSize: 13,
+                                              textAlign: 'left',
+                                              cursor: hasAnswered ? 'default' : 'pointer'
+                                            }}
+                                          >
+                                            <span>{opt}</span>
+                                            {hasAnswered && isCorrect && <Check size={14} color="#16a34a" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                    {hasAnswered && q.explanation && (
+                                      <div style={{ marginTop: 10, fontSize: 12, color: '#71717a', lineHeight: 1.5, background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
+                                        <strong>Why: </strong> {q.explanation}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 8, borderTop: '1px solid #f4f4f5' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAudio(turn)}
+                          style={{
+                            padding: 7,
+                            borderRadius: 6,
+                            border: 'none',
+                            background: isSpeaking ? '#f4f4f5' : 'transparent',
+                            color: isSpeaking ? '#2563eb' : '#71717a',
+                            cursor: 'pointer'
+                          }}
+                          title={isSpeaking ? 'Stop audio' : 'Listen to note'}
+                        >
+                          {isSpeaking ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(turn)}
+                          style={{
+                            padding: 7,
+                            borderRadius: 6,
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#71717a',
+                            cursor: 'pointer'
+                          }}
+                          title="Copy response"
+                        >
+                          {hasCopied ? <Check size={16} color="#16a34a" /> : <Copy size={16} />}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleShare}
+                          style={{
+                            padding: 7,
+                            borderRadius: 6,
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#71717a',
+                            cursor: 'pointer'
+                          }}
+                          title="Share note link"
+                        >
+                          <Share2 size={16} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPdf(turn)}
+                          style={{
+                            padding: 7,
+                            borderRadius: 6,
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#71717a',
+                            cursor: 'pointer'
+                          }}
+                          title="Download as PDF"
+                        >
+                          <Download size={16} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => onSaveNote(activeNote)}
+                          style={{
+                            padding: 7,
+                            borderRadius: 6,
+                            border: 'none',
+                            background: 'transparent',
+                            color: isNoteSaved ? '#2563eb' : '#71717a',
+                            cursor: 'pointer'
+                          }}
+                          title={isNoteSaved ? 'Saved to vault' : 'Save to vault'}
+                        >
+                          {isNoteSaved ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* In-flight loading message */}
+              {loading && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                    {submittedFile && (
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          background: '#f4f4f5',
+                          border: '1px solid #e4e4e7',
+                          borderRadius: 8,
+                          padding: '4px 10px',
+                          fontSize: 12,
+                          fontWeight: 500,
+                          color: '#27272a'
+                        }}
+                      >
+                        {submittedFile.type === 'pdf' ? (
+                          <span style={{ background: '#ef4444', color: '#ffffff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>
+                            PDF
+                          </span>
+                        ) : submittedFile.type === 'image' ? (
+                          <span style={{ background: '#3b82f6', color: '#ffffff', fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4 }}>
+                            IMG
+                          </span>
+                        ) : (
+                          <FileText size={13} style={{ color: '#71717a' }} />
+                        )}
+                        <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {submittedFile.name}
+                        </span>
+                      </div>
                     )}
-                    <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {submittedFile.name}
+
+                    <div
+                      style={{
+                        maxWidth: '85%',
+                        background: '#f4f4f5',
+                        borderRadius: 18,
+                        padding: '12px 18px',
+                        fontSize: 14.5,
+                        color: '#09090b',
+                        lineHeight: 1.5
+                      }}
+                    >
+                      {submittedPrompt}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0' }}>
+                    <span
+                      className="plainnotes-thinking-text"
+                      style={{
+                        fontSize: 13.5,
+                        fontWeight: 500,
+                        color: '#71717a',
+                        letterSpacing: '-0.01em'
+                      }}
+                    >
+                      PlainNotes is thinking...
                     </span>
                   </div>
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 24 }}>
-                <div
-                  style={{
-                    maxWidth: '85%',
-                    background: '#f4f4f5',
-                    borderRadius: 18,
-                    padding: '12px 18px',
-                    fontSize: 14.5,
-                    color: '#09090b',
-                    lineHeight: 1.5
-                  }}
-                >
-                  {submittedPrompt || activeNote?.originalText}
-                </div>
-              </div>
-
-              {loading ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 0' }}>
-                  <span
-                    className="plainnotes-thinking-text"
-                    style={{
-                      fontSize: 13.5,
-                      fontWeight: 500,
-                      color: '#71717a',
-                      letterSpacing: '-0.01em'
-                    }}
-                  >
-                    PlainNotes is thinking...
-                  </span>
-                </div>
-              ) : activeNote ? (
-                <div className="plainnotes-fade-down" style={{ display: 'flex', flexDirection: 'column', gap: 28, width: '100%' }}>
-                  <div>
-                    <h2 style={{ fontSize: 22, fontWeight: 700, color: '#09090b', marginBottom: 12, letterSpacing: '-0.02em' }}>
-                      {activeNote.title}
-                    </h2>
-                    <p style={{ fontSize: 15, lineHeight: 1.7, color: '#18181b', margin: 0, whiteSpace: 'pre-wrap' }}>
-                      {typedText || activeNote.simplifiedText}
-                      {isTyping && <span className="plainnotes-cursor">▋</span>}
-                    </p>
-                  </div>
-
-                  {activeNote.localAnalogy && (
-                    <div
-                      style={{
-                        borderLeft: '3px solid #2563eb',
-                        background: '#f8fafc',
-                        padding: '14px 18px',
-                        borderRadius: '0 8px 8px 0'
-                      }}
-                    >
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 4 }}>
-                        EVERYDAY ANALOGY
-                      </div>
-                      <div style={{ fontSize: 14, color: '#334155', lineHeight: 1.6 }}>
-                        {activeNote.localAnalogy}
-                      </div>
-                    </div>
-                  )}
-
-                  {activeNote.examEssentials && activeNote.examEssentials.length > 0 && (
-                    <div style={{ background: '#fafafa', border: '1px solid #f4f4f5', borderRadius: 12, padding: 18 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#09090b', marginBottom: 10 }}>
-                        Exam Essentials (WAEC/JAMB Takeaways)
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {activeNote.examEssentials.map((point, idx) => {
-                          const isDone = Boolean(checkedEssentials[idx]);
-                          return (
-                            <div
-                              key={idx}
-                              onClick={() => {
-                                const next = { ...checkedEssentials, [idx]: !isDone };
-                                setCheckedEssentials(next);
-                                persistQuizState(quizAnswers, next);
-                              }}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: 10,
-                                cursor: 'pointer',
-                                fontSize: 13.5,
-                                color: isDone ? '#a1a1aa' : '#3f3f46',
-                                textDecoration: isDone ? 'line-through' : 'none'
-                              }}
-                            >
-                              {isDone ? (
-                                <CheckCircle2 size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: 2 }} />
-                              ) : (
-                                <Circle size={16} color="#d4d4d8" style={{ flexShrink: 0, marginTop: 2 }} />
-                              )}
-                              <span>{point}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {questionsList.length > 0 && (
-                    <div style={{ borderTop: '1px solid #f4f4f5', paddingTop: 24 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: '#09090b' }}>
-                          Check Your Understanding ({questionsList.length} Questions)
-                        </div>
-                        {answeredCount > 0 && (
-                          <div style={{ fontSize: 12, fontWeight: 600, color: correctCount === answeredCount ? '#16a34a' : '#d97706' }}>
-                            Score: {correctCount}/{answeredCount}
-                          </div>
-                        )}
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                        {questionsList.map((q, qIdx) => {
-                          const selected = quizAnswers[qIdx];
-                          const hasAnswered = selected !== undefined;
-                          return (
-                            <div key={qIdx} style={{ background: '#fcfcfc', border: '1px solid #e4e4e7', borderRadius: 12, padding: 16 }}>
-                              <div style={{ fontSize: 13.5, fontWeight: 600, color: '#09090b', marginBottom: 10 }}>
-                                {qIdx + 1}. {q.question}
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {q.options.map((opt, optIdx) => {
-                                  const isSelected = selected === optIdx;
-                                  const isCorrect = q.answerIndex === optIdx;
-                                  let bg = '#ffffff';
-                                  let borderColor = '#e4e4e7';
-                                  let textColor = '#27272a';
-
-                                  if (hasAnswered) {
-                                    if (isCorrect) {
-                                      bg = '#f0fdf4';
-                                      borderColor = '#86efac';
-                                      textColor = '#166534';
-                                    } else if (isSelected) {
-                                      bg = '#fef2f2';
-                                      borderColor = '#fca5a5';
-                                      textColor = '#991b1b';
-                                    }
-                                  }
-
-                                  return (
-                                    <button
-                                      key={optIdx}
-                                      type="button"
-                                      disabled={hasAnswered}
-                                      onClick={() => {
-                                        const next = { ...quizAnswers, [qIdx]: optIdx };
-                                        setQuizAnswers(next);
-                                        persistQuizState(next, checkedEssentials);
-                                      }}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        padding: '9px 12px',
-                                        borderRadius: 8,
-                                        border: `1px solid ${borderColor}`,
-                                        background: bg,
-                                        color: textColor,
-                                        fontSize: 13,
-                                        textAlign: 'left',
-                                        cursor: hasAnswered ? 'default' : 'pointer'
-                                      }}
-                                    >
-                                      <span>{opt}</span>
-                                      {hasAnswered && isCorrect && <Check size={14} color="#16a34a" />}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              {hasAnswered && q.explanation && (
-                                <div style={{ marginTop: 10, fontSize: 12, color: '#71717a', lineHeight: 1.5, background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
-                                  <strong>Why: </strong> {q.explanation}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 8, borderTop: '1px solid #f4f4f5' }}>
-                    <button
-                      type="button"
-                      onClick={handleToggleAudio}
-                      style={{
-                        padding: 7,
-                        borderRadius: 6,
-                        border: 'none',
-                        background: isSpeaking ? '#f4f4f5' : 'transparent',
-                        color: isSpeaking ? '#2563eb' : '#71717a',
-                        cursor: 'pointer'
-                      }}
-                      title={isSpeaking ? 'Stop audio' : 'Listen to note'}
-                    >
-                      {isSpeaking ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleCopy}
-                      style={{
-                        padding: 7,
-                        borderRadius: 6,
-                        border: 'none',
-                        background: 'transparent',
-                        color: '#71717a',
-                        cursor: 'pointer'
-                      }}
-                      title="Copy response"
-                    >
-                      {hasCopied ? <Check size={16} color="#16a34a" /> : <Copy size={16} />}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleShare}
-                      style={{
-                        padding: 7,
-                        borderRadius: 6,
-                        border: 'none',
-                        background: 'transparent',
-                        color: '#71717a',
-                        cursor: 'pointer'
-                      }}
-                      title="Share note link"
-                    >
-                      <Share2 size={16} />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleDownloadPdf}
-                      style={{
-                        padding: 7,
-                        borderRadius: 6,
-                        border: 'none',
-                        background: 'transparent',
-                        color: '#71717a',
-                        cursor: 'pointer'
-                      }}
-                      title="Download as PDF"
-                    >
-                      <Download size={16} />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onSaveNote(activeNote)}
-                      style={{
-                        padding: 7,
-                        borderRadius: 6,
-                        border: 'none',
-                        background: 'transparent',
-                        color: isNoteSaved ? '#2563eb' : '#71717a',
-                        cursor: 'pointer'
-                      }}
-                      title={isNoteSaved ? 'Saved to vault' : 'Save to vault'}
-                    >
-                      {isNoteSaved ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+              <div ref={bottomAnchorRef} />
             </div>
           </div>
 

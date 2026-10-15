@@ -11,7 +11,11 @@ const requestSchema = z.object({
   subject: z.string().optional(),
   level: z.enum(['secondary', 'tertiary', 'vocational']).default('secondary'),
   imageBase64: z.string().optional(),
-  pdfBase64: z.string().optional()
+  pdfBase64: z.string().optional(),
+  history: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string()
+  })).optional()
 }).refine(data => data.text.trim().length >= 3 || Boolean(data.imageBase64) || Boolean(data.pdfBase64), {
   message: 'Please provide academic text, attach a document/PDF, or upload an image.'
 });
@@ -31,7 +35,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { text, language, subject, level, imageBase64, pdfBase64 } = parsed.data;
+    const { text, language, subject, level, imageBase64, pdfBase64, history } = parsed.data;
 
     let processedText = text;
 
@@ -72,7 +76,8 @@ export async function POST(req: NextRequest) {
       language: language as LanguageCode,
       subject,
       level,
-      imageBase64
+      imageBase64,
+      history
     });
 
     try {
