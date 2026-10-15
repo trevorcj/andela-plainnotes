@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-export interface AfricanCountry {
+interface AfricanCountry {
   name: string;
   code: string;
   flag: string;
@@ -9,7 +9,7 @@ export interface AfricanCountry {
   placeholder: string;
 }
 
-export const ALL_AFRICAN_COUNTRIES: AfricanCountry[] = [
+const ALL_AFRICAN_COUNTRIES: AfricanCountry[] = [
   { name: 'Nigeria', code: '+234', flag: '🇳🇬', cca2: 'NG', mask: '### ### ####', placeholder: '803 123 4567' },
   { name: 'Ghana', code: '+233', flag: '🇬🇭', cca2: 'GH', mask: '## ### ####', placeholder: '24 123 4567' },
   { name: 'Kenya', code: '+254', flag: '🇰🇪', cca2: 'KE', mask: '### ### ###', placeholder: '712 345 678' },
